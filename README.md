@@ -19,3 +19,7 @@
 1. Paper : https://arxiv.org/pdf/1706.03762.pdf
 2. Data : https://huggingface.co/datasets/wmt14
 3. How to write Pytorch Code : https://nn.labml.ai/transformers/mha.html
+
+## Video Resources ? 
+1. https://www.youtube.com/watch?v=iDulhoQ2pro
+2. 

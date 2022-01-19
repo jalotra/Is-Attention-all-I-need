@@ -17,25 +17,24 @@ class Prepare(nn.Module):
     def __init__(self, 
         model_dims : int,
         number_heads : int, 
-        key_dims : int,
+        head_dims : int,
         bias = True
     ):
         super().__init__()
-        self.linear = nn.linear(model_dims, number_heads * key_dims, bias = bias)
+        self.linear = nn.linear(model_dims, number_heads * head_dims, bias = bias)
         self.number_heads = number_heads
-        self.key_dims = key_dims
-    
-    # Input : [seq_len, batch_size, model_dims]
-    # Output : [seq_len, batch_size, number_heads, key_dims]
+        self.head_dims = head_dims
+
+    # Input : [N, seq_len, model_dims]
+    # Output : [N, seq_len, number_heads, heads_dim]
     def forward(self, x : torch.Tensor):
         remain_same = x.shape[:-1]
         x = self.linear_layer(x)
-        x = x.view(*remain_same, self.number_heads, self.key_dims)
-        
+        x = x.view(*remain_same, self.number_heads, self.head_dims)
         return x
 
 # Implements multi-head-attention
-class MultiHeadAttenstion(nn.Module):
+class MultiHeadAttention(nn.Module):
     def __init__(self, model_dims : int, number_heads : int, dropout_prob : float = 0.1, bias : bool = True):
         super().__init__()
         
@@ -44,27 +43,28 @@ class MultiHeadAttenstion(nn.Module):
         self.dropout_prob = dropout_prob
         self.bias = bias
 
+        assert(self.model_dims % self.number_heads == 0)
         self.key_dims = self.model_dims // self.number_heads
 
         # Now get the (query, key and value) vectors
-        self.key = Prepare(model_dims = model_dims, number_heads = number_heads, key_dims = self.key_dims, bias = bias)
-        self.value = Prepare(model_dims = model_dims, number_heads = number_heads, key_dims = self.key_dims, bias = bias)
-        self.query = Prepare(model_dims = model_dims, number_heads = number_heads, key_dims = self.key_dims, bias = bias)
+        self.key = Prepare(model_dims = model_dims, number_heads = number_heads, key_dims = self.key_dims, bias = self.bias)
+        self.value = Prepare(model_dims = model_dims, number_heads = number_heads, key_dims = self.key_dims, bias = self.bias)
+        self.query = Prepare(model_dims = model_dims, number_heads = number_heads, key_dims = self.key_dims, bias = self.bias)
 
         # Useful Layers 
         # Softmax accross 1 dimension 
-        self.softmax = nn.Softmax(dim = 1)
-        self.output = nn.Linear(model_dims, model_dims)
+        self.softmax = nn.Softmax(dim = 3)
+        self.output = nn.Linear(model_dims, model_dims, bias = self.bias)
         self.dropout = nn.Dropout(dropout_prob)
         self.scale = 1 / np.sqrt(self.key_dims)
     
     # Calculates QK^t
     def get_scores(self, query : torch.Tensor, key = torch.Tensor):
         assert(len(query.shape) == 4)
-        # After transpose : 
-        # key : [seq_len, batch_size, key_dims, number_heads]
-        key = torch.transpose(key, dim0= 2,dim1 = 3)
-        return torch.matmul(query, key)
+        # key : [N, key_len, number_heads, heads_dim]
+        # query : [N, query_len, number_heads, heads_dim]
+        # Output : [N, heads, query_len, key_len]
+        return torch.einsum("nqhd,nkhd->nhqk", [query, key])
     
     # Masks the leftword information flow in decorder
     # Check 3.2.3[Point 3]
@@ -73,27 +73,27 @@ class MultiHeadAttenstion(nn.Module):
     
     def forward(self, query : torch.Tensor, key : torch.Tensor, value : torch.Tensor, mask : Optional[torch.Tensor])
 
-        seq_len, batch_size, _ = query.shape
+        N, query_len, _ = query.shape
 
         query = self.query(query)
         key = self.key(key)
         value = self.value(value)
-
-        if mask is not None:
-            raise NotImplementedError()
-        
         scores = self.get_scores(query, key)
-        scores *= self.scale
 
         if mask is not None:
-            raise NotImplementedError()
+            scores = scores.masked_fill(mask == 0, float(-1e+20)) 
         
+        scores *= self.scale
         attn = self.softmax(scores)
         attn = self.dropout(attn)
 
+
         # Multiply attn with V
-        x = torch.einsum("ijbh,jbhd->ibhd", attn, value)
+        # attn shape = [N, heads, query_len, key_len]
+        # V shape : [N, value_len, heads, head_dims]
+        # Output shape : [N, query_len, heads, head_dims]
+        x = torch.einsum("nhql,nlhd->nlhd", [attn, value])
         self.attn = attn.detach()
-        x = x.reshape(seq_len, batch_size, -1)
+        x = x.reshape(N, query_len, -1)
 
         return self.output(x)
