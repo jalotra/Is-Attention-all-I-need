@@ -11,7 +11,6 @@ the vectors d_model[keys], d_model[values] and d_model[queries] to make
 parallel h modules on which attention is run in parallel and final output is 
 concatenation of these h resultant vectors. 
 '''
-
 # Linearly projects a tensor of model_dims to [heads, key_dims]
 class Prepare(nn.Module):
     def __init__(self, 
@@ -52,7 +51,7 @@ class MultiHeadAttention(nn.Module):
         self.query = Prepare(model_dims = model_dims, number_heads = number_heads, key_dims = self.key_dims, bias = self.bias)
 
         # Useful Layers 
-        # Softmax accross 1 dimension 
+        # Softmax accross 3 dimension 
         self.softmax = nn.Softmax(dim = 3)
         self.output = nn.Linear(model_dims, model_dims, bias = self.bias)
         self.dropout = nn.Dropout(dropout_prob)
@@ -72,7 +71,6 @@ class MultiHeadAttention(nn.Module):
         return mask.unsqueeze(-1)
     
     def forward(self, query : torch.Tensor, key : torch.Tensor, value : torch.Tensor, mask : Optional[torch.Tensor])
-
         N, query_len, _ = query.shape
 
         query = self.query(query)
